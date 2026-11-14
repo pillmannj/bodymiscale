@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import EVENT_STATE_CHANGED, EVENT_STATE_REPORTED
 from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
@@ -877,6 +878,70 @@ async def test_accept_pending_measurement_replays_impedance(
     handler.accept_pending_measurement()
 
     assert fat_values, "FAT_PERCENTAGE should be computed after replay"
+    handler.unload()
+
+
+def _s400_notify_handler(
+    hass: HomeAssistant, prefix: str
+) -> tuple[BodyScaleMetricsHandler, list[float]]:
+    hass.states.async_set(f"binary_sensor.stab_{prefix}", "off")
+    config = _make_config(
+        impedance_mode=IMPEDANCE_MODE_DUAL,
+        weight_sensor=f"sensor.w_{prefix}",
+        impedance_low_sensor=f"sensor.imp_low_{prefix}",
+        impedance_high_sensor=f"sensor.imp_high_{prefix}",
+        stabilized_sensor=f"binary_sensor.stab_{prefix}",
+        profile_method=PROFILE_METHOD_NOTIFY,
+    )
+    handler = BodyScaleMetricsHandler(hass, config, config_entry_id="e1")
+    coordinator = MagicMock(spec=NotificationCoordinator)
+    coordinator.async_notify = AsyncMock()
+    handler.set_notification_coordinator(coordinator)
+    fat_values: list[float] = []
+    handler.subscribe(Metric.FAT_PERCENTAGE, lambda v: fat_values.append(float(v)))
+    return handler, fat_values
+
+
+async def test_accept_pending_replays_impedance_written_before_stabilized(
+    hass: HomeAssistant,
+) -> None:
+    """S400: impedance written with the weight, before stabilized, is replayed."""
+    handler, fat_values = _s400_notify_handler(hass, "s400")
+
+    hass.states.async_set("sensor.w_s400", "77.2")
+    hass.states.async_set("sensor.imp_low_s400", "506")
+    hass.states.async_set("sensor.imp_high_s400", "458")
+    hass.states.async_set("binary_sensor.stab_s400", "on")
+    await hass.async_block_till_done()
+    await _fire_stabilized_delay(hass)
+
+    handler.profile_filter.confirm()
+    handler.accept_pending_measurement()
+
+    assert fat_values, "FAT_PERCENTAGE should be computed from this weigh-in"
+    handler.unload()
+
+
+async def test_accept_pending_does_not_replay_stale_impedance(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Impedance older than the measurement window is not replayed."""
+    handler, fat_values = _s400_notify_handler(hass, "stale")
+
+    hass.states.async_set("sensor.imp_low_stale", "590")
+    hass.states.async_set("sensor.imp_high_stale", "522")
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(minutes=2))
+
+    hass.states.async_set("sensor.w_stale", "77.2")
+    hass.states.async_set("binary_sensor.stab_stale", "on")
+    await hass.async_block_till_done()
+    await _fire_stabilized_delay(hass)
+
+    handler.profile_filter.confirm()
+    handler.accept_pending_measurement()
+
+    assert not fat_values, "Stale impedance must not be assigned to this weigh-in"
     handler.unload()
 
 

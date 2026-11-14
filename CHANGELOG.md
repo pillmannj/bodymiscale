@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 <!--next-version-placeholder-->
 
+## Unreleased
+
+### 🔧 Bug fixes
+
+- **Body composition missing after confirming a notification (S400)**: With the interactive notification method and a stabilized sensor, only BMI and visceral fat were updated after confirmation. The S400 writes the impedances before the stabilized sensor turns ON, and they were cleared when the notification was sent. They are now kept if they belong to this weigh-in.
+
 ## 2026.11.1
 
 ### 🔧 Bug fixes

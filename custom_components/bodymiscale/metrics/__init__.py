@@ -648,7 +648,19 @@ class BodyScaleMetricsHandler:
         self._cancel_pending_timeout()
         self._pending_weight = val
         self._pending_state = state
-        self._pending_impedance.clear()
+        if self._stabilized_trigger:
+            # With a stabilized sensor the notification is sent after the
+            # weigh-in: scales such as the S400 (xiaomi_ble) have already written
+            # this measurement's impedance. Keep it, drop older readings.
+            now = dt_util.utcnow()
+            self._pending_impedance = {
+                metric: pending
+                for metric, pending in self._pending_impedance.items()
+                if (now - pending[1].last_updated).total_seconds()
+                <= STABILIZED_MEASUREMENT_WINDOW
+            }
+        else:
+            self._pending_impedance.clear()
         self._last_accepted_weight = None
 
         self._pending_timeout_cancel = async_call_later(
